@@ -1,3 +1,4 @@
+import math
 from PyQt5.QtWidgets import (
     QMainWindow,
     QVBoxLayout,
@@ -6,13 +7,31 @@ from PyQt5.QtWidgets import (
     QWidget,
     QGridLayout,
     QLabel,
+    QTabWidget,
+    QFormLayout,
+    QListWidget,
+    QListWidgetItem,
 )
 from PyQt5.QtCore import QSize
 from PyQt5.QtGui import QFont
 
-utils_but = ["C", "DEL", "RES"]
+# Константы для текста
+TEXT_RESULT = "Результат:"
+TEXT_LAST_RESULT = "Последний результат:"
+TEXT_ERROR_NOT_DEFINED = "Ошибка: переменная не определена"
+TEXT_ERROR = "Ошибка"
+TEXT_EMPTY = "Пусто"
+TEXT_ADD_VARIABLE = "Добавить переменную"
+TEXT_VARIABLE_NAME = "Имя переменной:"
+TEXT_VARIABLE_VALUE = "Значение переменной:"
+TEXT_ADD = "Добавить"
+TEXT_AVAILABLE_VARIABLES = "Доступные переменные:"
+TEXT_CALCULATOR = "Калькулятор"
+TEXT_VARIABLES = "Переменные"
 
-main_buttons = [
+# Константы для кнопок
+UTILS_BUTTONS = ["C", "DEL", "RES"]
+MAIN_BUTTONS = [
     "7",
     "8",
     "9",
@@ -30,19 +49,109 @@ main_buttons = [
     "=",
     "+",
 ]
-mode_but = ["MODE"]
-mode_pos = [(0, 3)]
-utils_pos = [(0, 0), (0, 1), (0, 2)]
-main_but_pos = [(i, j) for i in range(1, 5) for j in range(4)]
+MODE_BUTTONS = ["MOD"]
+ADD_VARIABLE_BUTTON = ["ADD_VAR"]
+
+# Константы для позиций кнопок
+UTILS_POSITIONS = [(0, 0), (0, 1), (0, 2)]
+MAIN_POSITIONS = [(i, j) for i in range(1, 5) for j in range(4)]
+MODE_POSITIONS = [(0, 3)]
+ADD_VARIABLE_POSITIONS = [(0, 4)]
+
+# Константы для шрифтов
+FONT_NAME = "Arial"
+FONT_SIZE_HEADER = 14
+FONT_SIZE_DISPLAY = 20
+FONT_SIZE_BUTTON = 16
+
+# Константы для размеров
+BUTTON_SIZE = QSize(60, 60)
+DISPLAY_HEIGHT = 40
+LAST_RESULT_HEIGHT = 30
+
+
+class DisplayWidget(QWidget):
+    def __init__(self, header_text, height, font_size, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.add_header(header_text)
+        self.display = self.create_display(height, font_size)
+        self.layout.addWidget(self.display)
+
+    def add_header(self, text):
+        header = QLabel(text)
+        header.setFont(QFont(FONT_NAME, FONT_SIZE_HEADER))
+        self.layout.addWidget(header)
+
+    def create_display(self, height, font_size):
+        display = QLineEdit()
+        display.setFont(QFont(FONT_NAME, font_size))
+        display.setFixedHeight(height)
+        return display
+
+    def set_text(self, text):
+        self.display.setText(text)
+
+    def get_text(self):
+        return self.display.text()
+
+
+class ButtonWidget(QPushButton):
+    def __init__(self, text, callback, parent=None):
+        super().__init__(text, parent)
+        self.setFixedSize(BUTTON_SIZE)
+        self.setFont(QFont(FONT_NAME, FONT_SIZE_BUTTON))
+        self.clicked.connect(callback)
+
+
+class VariablesTab(QWidget):
+    def __init__(self, variables, parent=None):
+        super().__init__(parent)
+        self.variables = variables
+        self.layout = QVBoxLayout(self)
+
+        # Добавляем список доступных переменных
+        self.variables_list = QListWidget()
+        self.update_variables_list()
+        self.layout.addWidget(QLabel(TEXT_AVAILABLE_VARIABLES))
+        self.layout.addWidget(self.variables_list)
+
+        # Добавляем форму для ввода новой переменной
+        form_layout = QFormLayout()
+        self.variable_name_input = QLineEdit()
+        self.variable_value_input = QLineEdit()
+        form_layout.addRow(QLabel(TEXT_VARIABLE_NAME), self.variable_name_input)
+        form_layout.addRow(QLabel(TEXT_VARIABLE_VALUE), self.variable_value_input)
+        self.layout.addLayout(form_layout)
+
+        add_button = QPushButton(TEXT_ADD)
+        add_button.clicked.connect(self.add_variable)
+        self.layout.addWidget(add_button)
+
+    def update_variables_list(self):
+        self.variables_list.clear()
+        for var_name, var_value in self.variables.items():
+            item_text = f"{var_name} = {var_value}"
+            self.variables_list.addItem(QListWidgetItem(item_text))
+
+    def add_variable(self):
+        var_name = self.variable_name_input.text()
+        var_value = self.variable_value_input.text()
+        if var_name and var_value:
+            self.variables[var_name] = var_value
+            self.update_variables_list()
+            self.variable_name_input.clear()
+            self.variable_value_input.clear()
 
 
 class CalculatorWithUI(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        self.font = "Arial"
+        self.font = FONT_NAME
         self.last_result = None
-        self.x_value = None
+        self.variables = {"RES": "0"}  # Добавляем переменную RES по умолчанию
+        self.mode_active = False  # Флаг для отслеживания состояния кнопки MOD
+        self.additional_buttons = []  # Список для хранения дополнительных кнопок
         self.initUI()
 
     def initUI(self):
@@ -54,119 +163,135 @@ class CalculatorWithUI(QMainWindow):
 
         self.layout = QVBoxLayout(central_widget)
 
-        self.setup_result_display()
-        self.setup_last_result_display()
-        self.setup_grid_buttons()
-        self.setup_x_input()
+        self.setup_tabs()
 
-    def setup_result_display(self):
-        # Result Display
-        display_layout = QVBoxLayout()  # Layout
-        display_header = QLabel("Результат:")
-        display_header.setFont(QFont(self.font, 14))
-        display_layout.addWidget(display_header)
+    def setup_tabs(self):
+        self.tabs = QTabWidget()
+        self.layout.addWidget(self.tabs)
 
-        self.display = QLineEdit()
-        self.display.setReadOnly(True)
-        self.display.setFont(QFont(self.font, 20))
-        self.display.setFixedHeight(40)
+        self.setup_calculator_tab()
+        self.setup_variables_tab()
 
-        display_layout.addWidget(self.display)
+    def setup_calculator_tab(self):
+        calculator_tab = QWidget()
+        tab_layout = QVBoxLayout(calculator_tab)
 
-        self.layout.addLayout(display_layout)
+        self.setup_result_display(tab_layout)
+        self.setup_last_result_display(tab_layout)
+        self.setup_grid_buttons(tab_layout)
 
-    def setup_last_result_display(self):
-        # Last Result Display with Header
-        last_result_layout = QVBoxLayout()
+        self.tabs.addTab(calculator_tab, TEXT_CALCULATOR)
 
-        # Header for Last Result Display
-        last_result_header = QLabel("Последний результат:")
-        last_result_header.setFont(QFont(self.font, 14))
-        last_result_layout.addWidget(last_result_header)
-        # Last Result Display
-        self.last_result_display = QLineEdit()
-        self.last_result_display.setReadOnly(True)
-        self.last_result_display.setFont(QFont(self.font, 14))
-        self.last_result_display.setFixedHeight(30)
-        last_result_layout.addWidget(self.last_result_display)
+    def setup_variables_tab(self):
+        self.variables_tab = VariablesTab(self.variables)
+        self.tabs.addTab(self.variables_tab, TEXT_VARIABLES)
 
-        self.layout.addLayout(last_result_layout)
+    def setup_result_display(self, layout):
+        self.result_display = DisplayWidget(
+            TEXT_RESULT, DISPLAY_HEIGHT, FONT_SIZE_DISPLAY
+        )
+        layout.addWidget(self.result_display)
 
-    def setup_grid_buttons(self):
-        # Buttons
+    def setup_last_result_display(self, layout):
+        self.last_result_display = DisplayWidget(
+            TEXT_LAST_RESULT, LAST_RESULT_HEIGHT, FONT_SIZE_HEADER
+        )
+        layout.addWidget(self.last_result_display)
+
+    def setup_grid_buttons(self, layout):
         self.grid_layout = QGridLayout()
+        self.add_buttons(UTILS_BUTTONS, UTILS_POSITIONS)
+        self.add_buttons(MAIN_BUTTONS, MAIN_POSITIONS)
+        self.add_buttons(MODE_BUTTONS, MODE_POSITIONS)
+        layout.addLayout(self.grid_layout)
 
-        self.add_buttons(utils_but, utils_pos)
-        self.add_buttons(main_buttons, main_but_pos)
-
-        self.layout.addLayout(self.grid_layout)
-
-    def setup_x_input(self):
-        # X Input Display with Header
-        x_input_layout = QVBoxLayout()
-
-        # Header for X Input Display
-        x_input_header = QLabel("Значение x:")
-        x_input_header.setFont(QFont(self.font, 14))
-        x_input_layout.addWidget(x_input_header)
-        # X Input Display
-        self.x_input = QLineEdit()
-        self.x_input.setFont(QFont(self.font, 14))
-        self.x_input.setFixedHeight(30)
-        x_input_layout.addWidget(self.x_input)
-
-        # Button to insert x into the expression
-        insert_x_button = QPushButton("Вставить x")
-        insert_x_button.setFont(QFont(self.font, 14))
-        insert_x_button.clicked.connect(self.insert_x)
-        x_input_layout.addWidget(insert_x_button)
-
-        self.layout.addLayout(x_input_layout)
-
-    def insert_x(self):
-        x_value = self.x_input.text()
-        if x_value:
-            self.display.setText(self.display.text() + "x")
-
-    def add_buttons(self, buttons: list[str], positions: list[tuple[int]]):
+    def add_buttons(self, buttons, positions):
         for position, button_text in zip(positions, buttons):
-            button = QPushButton(button_text)
-            button.setFixedSize(QSize(60, 60))
-            button.setFont(QFont(self.font, 16))
-            button.clicked.connect(self.on_button_click)
+            button = ButtonWidget(button_text, self.on_button_click)
             self.grid_layout.addWidget(button, *position)
+            if button_text == "MOD":
+                self.mode_button = button  # Сохраняем ссылку на кнопку MOD
 
     def on_button_click(self):
         sender = self.sender()
         text = sender.text()
         if text == "=":
             self.calculate()
+            self.show_last_result()
         elif text == "C":
-            self.display.clear()
-        elif text == "RES":
-            if self.last_result:
-                self.last_result_display.setText(self.last_result)
-            else:
-                self.last_result_display.setText("Пусто")
+            self.result_display.set_text("")
         elif text == "DEL":
-            self.display.setText(self.display.text()[:-1])
+            self.delete_last_character()
+        elif text == "MOD":
+            self.toggle_mode()  # Переключаем состояние кнопки MOD
         else:
-            self.display.setText(self.display.text() + text)
+            self.append_to_display(text)
 
     def calculate(self):
         try:
-            expression = self.display.text()
-            if "x" in expression:
-                x_value = self.x_input.text()
-                if x_value:
-                    expression = expression.replace("x", x_value)
-                else:
-                    self.display.setText("Ошибка: x не определено")
-                    return
+            expression = self.result_display.get_text()
+            for var_name, var_value in self.variables.items():
+                expression = expression.replace(var_name, var_value)
 
-            result = str(eval(expression))
-            self.last_result = result
-            self.display.setText(result)
-        except Exception as e:
-            self.display.setText("Ошибка")
+            if "RES" in expression and self.last_result:
+                expression = expression.replace("RES", self.last_result)
+            else:
+                expression = expression.replace("RES", "")
+            # Обработка математических функций
+            expression = expression.replace("sin", "math.sin")
+            expression = expression.replace("cos", "math.cos")
+            expression = expression.replace("tan", "math.tan")
+
+            # Вычисление выражения и округление результата до двух знаков после запятой
+            result = round(eval(expression, {"__builtins__": None}, {"math": math}), 2)
+            self.last_result = str(result)
+            self.variables["RES"] = (
+                self.last_result
+            )  # Обновляем значение переменной RES
+            self.result_display.set_text(self.last_result)
+            self.variables_tab.update_variables_list()  # Обновляем список переменных
+        except Exception:
+            self.result_display.set_text(TEXT_ERROR)
             self.last_result = None
+
+    def show_last_result(self):
+        if self.last_result:
+            if (
+                self.result_display.display.hasFocus()
+            ):  # Проверяем, находится ли курсор в поле "Результат"
+                self.result_display.set_text(self.last_result)
+            else:
+                self.last_result_display.set_text(self.last_result)
+        else:
+            self.last_result_display.set_text(TEXT_EMPTY)
+
+    def delete_last_character(self):
+        current_text = self.result_display.get_text()
+        self.result_display.set_text(current_text[:-1])
+
+    def append_to_display(self, text):
+        current_text = self.result_display.get_text()
+        self.result_display.set_text(current_text + text)
+
+    def toggle_mode(self):
+        self.mode_active = not self.mode_active  # Переключаем флаг
+        if self.mode_active:
+            self.add_additional_buttons()
+        else:
+            self.remove_additional_buttons()
+
+    def add_additional_buttons(self):
+        # Добавляем новые кнопки
+        additional_buttons = ["sin", "cos", "tan"]
+        additional_positions = [(5, 0), (5, 1), (5, 2)]
+        for position, button_text in zip(additional_positions, additional_buttons):
+            button = ButtonWidget(button_text, self.on_button_click)
+            self.grid_layout.addWidget(button, *position)
+            self.additional_buttons.append(button)
+
+    def remove_additional_buttons(self):
+        # Удаляем добавленные кнопки
+        for button in self.additional_buttons:
+            self.grid_layout.removeWidget(button)
+            button.setParent(None)
+        self.additional_buttons.clear()
